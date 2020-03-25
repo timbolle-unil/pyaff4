@@ -31,6 +31,7 @@ from pyaff4 import lexicon, logical, escaping
 from pyaff4 import rdfvalue, hashes, utils
 from pyaff4 import block_hasher, data_store, linear_hasher, zip
 from pyaff4 import aff4_map
+from pyaff4 import blockchain
 
 #logging.basicConfig(level=logging.DEBUG)
 
@@ -287,16 +288,22 @@ def addPathNamesToVolume(resolver, volume, pathnames, recursive, hashbased):
                     pathnames.append(os.path.join(pathname, child))
         else:
             with open(pathname, "rb") as src:
-                hasher = linear_hasher.StreamHasher(src, [lexicon.HASH_SHA1, lexicon.HASH_MD5])
+                hasher = linear_hasher.StreamHasher(src, [lexicon.HASH_SHA1, lexicon.HASH_MD5, lexicon.HASH_SHA256])
                 if hashbased == False:
                     urn = volume.writeLogicalStream(pathname, hasher, fsmeta.length)
                 else:
                     urn = volume.writeLogicalStreamRabinHashBased(pathname, hasher, fsmeta.length)
                 fsmeta.urn = urn
                 fsmeta.store(resolver)
+                bc_writer = blockchain.BlockChainWriter.getBlockchainWriter()
+                hash_dict = {}
                 for h in hasher.hashes:
                     hh = hashes.newImmutableHash(h.hexdigest(), hasher.hashToType[h])
                     resolver.Add(urn, urn, rdfvalue.URN(lexicon.standard.hash), hh)
+                    hash_dict[h.name] = hh
+
+                if bc_writer:
+                    bc_writer.Set_hash(hash_dict["md5"], hash_dict["sha1"], hash_dict["sha256"])
 
 def addPathNames(container_name, pathnames, recursive, append, hashbased, password):
     with data_store.MemoryDataStore() as resolver:
@@ -425,6 +432,8 @@ def extract(container_name, imageURNs, destFolder, password):
             else:
                 extractFromVolume(container_urn, volume, imageURNs, destFolder)
 
+def write_blockchain():
+    pass
 
 
 def main(argv):
@@ -459,6 +468,8 @@ def main(argv):
                         help='ingest a zip file into a hash based image')
     parser.add_argument('-e', "--password", nargs=1, action="store",
                         help='provide a password for encryption. This causes an encrypted container to be used.')
+    parser.add_argument('-b', "--blockchain", nargs=1, action="store",
+                        help='provide the name of the configuration file for the blockchain usage')
     parser.add_argument('aff4container', help='the pathname of the AFF4 container')
     parser.add_argument('srcFiles', nargs="*", help='source files and folders to add as logical image')
 
@@ -470,8 +481,16 @@ def main(argv):
     TERSE = args.terse
 
     if args.create_logical == True:
+        print(args.blockchain)
+        if args.blockchain != True:
+            bc_writer = blockchain.BlockChainWriter(args.blockchain[0])
+            print(bc_writer)
         dest = args.aff4container
         addPathNames(dest, args.srcFiles, args.recursive, args.append, args.hash, args.password)
+        bc_writer = blockchain.BlockChainWriter.getBlockchainWriter()
+        print(bc_writer)
+        if bc_writer:
+            bc_writer.Write_to_blockChain(args.srcFiles)
     elif  args.meta == True:
         dest = args.aff4container
         meta(dest, args.password)
